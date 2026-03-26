@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Trivy Dashboard
+Comment=Docker image vulnerability scanner
+Exec=bash -c "cd /home/$USER/trivy-dashboard && ./start.sh"
+Icon=utilities-terminal
+Terminal=true
+Categories=Security;Network;
+StartupNotify=true

@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trivy Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%234a6cf7'/><text x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='18' font-family='system-ui' fill='white'>T</text></svg>">
+<link rel="stylesheet" href="trivy-dashboard.css">
+</head>
+<body>
+<div class="topbar">
+  <h1>CJRS Trivy Dashboard</h1>
+  <div class="topbar-spacer"></div>
+  <div class="dm-toggle" onclick="toggleDark()" id="dmToggle">
+    <span class="dm-toggle-label" id="dmLabel">Dark mode</span>
+    <div class="dm-track" id="dmTrack"><div class="dm-thumb"></div></div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="scan-bar">
+    <select id="scanType" onchange="onScanTypeChange()" style="border:1px solid var(--input-border);border-radius:6px;padding:9px 10px;font-size:13px;background:var(--surface);color:var(--text);outline:none;cursor:pointer">
+      <option value="image">Image</option>
+      <option value="container">Container</option>
+      <option value="fs">Filesystem</option>
+      <option value="repo">Git Repo</option>
+    </select>
+    <div style="flex:1;position:relative">
+      <input type="text" id="imageInput" placeholder="e.g. nginx:latest" style="width:100%" />
+      <select id="containerSelect" style="display:none;width:100%;border:1px solid var(--input-border);border-radius:6px;padding:9px 13px;font-size:13px;background:var(--surface);color:var(--text);outline:none"></select>
+    </div>
+    <div class="scan-options">
+      <label class="scan-toggle" id="tog-secrets"><input type="checkbox" id="chk-secrets" checked> Secrets</label>
+      <label class="scan-toggle" id="tog-misconfig"><input type="checkbox" id="chk-misconfig" checked> Misconfigs</label>
+      <label class="scan-toggle" id="tog-unfixed"><input type="checkbox" id="chk-unfixed"> Hide unfixed</label>
+    </div>
+    <button class="btn btn-primary" onclick="startScan()" id="scanBtn">Scan</button>
+  </div>
+  <div id="scanHint" style="font-size:12px;color:var(--text3);margin:0 0 16px 4px"></div>
+
+  <div id="riskBanner" style="display:none" class="risk-banner">
+    <div class="risk-score-circle" id="riskCircle">
+      <span class="score-num" id="riskNum">0</span>
+      <span class="score-label">Score</span>
+    </div>
+    <div class="risk-details">
+      <h3 id="riskTitle">Risk Assessment</h3>
+      <p id="riskDesc"></p>
+    </div>
+    <div class="fix-impact" id="fixImpact"></div>
+    <div class="age-bar">
+      <div class="age-stat"><div class="age-num" id="ageAvg">—</div><div class="age-lbl">Avg age (days)</div></div>
+      <div style="width:1px;height:40px;background:var(--age-bar-sep);margin:0 4px"></div>
+      <div class="age-stat"><div class="age-num" id="ageOldest">—</div><div class="age-lbl">Oldest CVE (days)</div></div>
+    </div>
+  </div>
+
+  <div id="metricsRow" class="metrics" style="display:none">
+    <div class="metric-card" onclick="setFilter('ALL')" id="card-all"><div class="label">Total</div><div class="value v-total" id="m-total">0</div><div class="sublabel">vulnerabilities</div></div>
+    <div class="metric-card" onclick="setFilter('CRITICAL')" id="card-CRITICAL"><div class="label">Critical</div><div class="value v-critical" id="m-critical">0</div><div class="sublabel">CVEs</div></div>
+    <div class="metric-card" onclick="setFilter('HIGH')" id="card-HIGH"><div class="label">High</div><div class="value v-high" id="m-high">0</div><div class="sublabel">CVEs</div></div>
+    <div class="metric-card" onclick="setFilter('MEDIUM')" id="card-MEDIUM"><div class="label">Medium</div><div class="value v-medium" id="m-medium">0</div><div class="sublabel">CVEs</div></div>
+    <div class="metric-card" onclick="setFilter('LOW')" id="card-LOW"><div class="label">Low</div><div class="value v-low" id="m-low">0</div><div class="sublabel">CVEs</div></div>
+    <div class="metric-card" onclick="setFilter('UNKNOWN')" id="card-UNKNOWN"><div class="label">Unknown</div><div class="value v-unknown" id="m-unknown">0</div><div class="sublabel">CVEs</div></div>
+    <div class="metric-card" onclick="toggleFixable()" id="card-fixable"><div class="label">Fixable</div><div class="value v-fixable" id="m-fixable">0</div><div class="sublabel">have a fix</div></div>
+  </div>
+
+  <div id="extraCards" class="extra-cards" style="display:none">
+    <div class="extra-card">
+      <h3>Secrets detected <span id="secretCount" style="font-weight:400;color:var(--text3)"></span>
+        <select class="status-select" id="secretSort" onchange="renderSecrets()" style="font-size:11px;padding:2px 8px">
+          <option value="sev">By severity</option><option value="title">By type</option><option value="target">By file</option>
+        </select>
+      </h3>
+      <div id="secretsList"></div>
+    </div>
+    <div class="extra-card">
+      <h3>Misconfigurations <span id="misconfigCount" style="font-weight:400;color:var(--text3)"></span>
+        <select class="status-select" id="misconfigSort" onchange="renderMisconfigs()" style="font-size:11px;padding:2px 8px">
+          <option value="sev">By severity</option><option value="title">By title</option><option value="target">By target</option>
+        </select>
+      </h3>
+      <div id="misconfigList"></div>
+    </div>
+  </div>
+
+  <div id="chartsRow" class="panels" style="display:none">
+    <div class="panel"><h3>Severity breakdown</h3><div class="bar-chart" id="severityChart"></div></div>
+    <div class="panel"><h3>Top affected packages</h3><div class="pkg-list" id="pkgList"></div></div>
+  </div>
+
+  <div id="resultsPanel" class="full-panel" style="display:none">
+    <div id="imageInfoBar" class="image-info"></div>
+
+    <!-- Export bar -->
+    <div class="export-bar">
+      <span>Export:</span>
+      <button class="btn-export" onclick="exportCSV()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        CSV
+      </button>
+      <button class="btn-export" onclick="exportJSON()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        JSON
+      </button>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="btn-export" onclick="exportPDF()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          PDF
+        </button>
+        <select id="pdfRows" style="border:1px solid var(--input-border);border-radius:6px;padding:5px 8px;font-size:12px;background:var(--surface);color:var(--text);outline:none;cursor:pointer">
+          <option value="20">Top 20</option>
+          <option value="50">Top 50</option>
+          <option value="100">Top 100</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="tab-bar">
+      <div class="tab active" onclick="switchTabByName('priority',this)">Priority Queue</div>
+      <div class="tab" onclick="switchTabByName('vulns',this)">All CVEs</div>
+      <div class="tab" onclick="switchTabByName('packages',this)">By Package</div>
+      <div class="tab" onclick="switchTabByName('compare',this)">Compare Scans</div>
+      <div class="tab" onclick="switchTabByName('history',this)">History <span id="historyCount" style="background:var(--bar-track);border-radius:10px;padding:1px 6px;font-size:11px;margin-left:4px">0</span></div>
+    </div>
+
+    <div id="tab-priority">
+      <div id="remedSummary" class="remed-summary"></div>
+      <div id="priorityList"></div>
+    </div>
+
+    <div id="tab-vulns" style="display:none">
+      <div class="table-controls">
+        <button class="filter-btn active" id="fb-ALL" onclick="setFilter('ALL')">All</button>
+        <button class="filter-btn" id="fb-CRITICAL" onclick="setFilter('CRITICAL')">Critical</button>
+        <button class="filter-btn" id="fb-HIGH" onclick="setFilter('HIGH')">High</button>
+        <button class="filter-btn" id="fb-MEDIUM" onclick="setFilter('MEDIUM')">Medium</button>
+        <button class="filter-btn" id="fb-LOW" onclick="setFilter('LOW')">Low</button>
+        <button class="filter-btn" id="fb-UNKNOWN" onclick="setFilter('UNKNOWN')">Unknown</button>
+        <button class="fixable-toggle" id="fixableToggle" onclick="toggleFixable()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          Fixable only
+        </button>
+        <select class="status-select" id="statusFilter" onchange="renderTable()">
+          <option value="all">All statuses</option>
+          <option value="affected">Affected</option>
+          <option value="fixed">Fixed</option>
+          <option value="will_not_fix">Will not fix</option>
+          <option value="end_of_life">End of life</option>
+          <option value="under_investigation">Under investigation</option>
+        </select>
+        <input class="search-input" type="text" id="searchInput" placeholder="Search CVE, package…" oninput="renderTable()">
+      </div>
+      <div class="table-wrap">
+        <table class="vuln-table">
+          <thead><tr>
+            <th></th><th onclick="sortBy('VulnerabilityID')">CVE ID</th><th onclick="sortBy('PkgName')">Package</th>
+            <th>Installed</th><th onclick="sortBy('Severity')">Severity</th><th onclick="sortBy('cvss')">CVSS</th>
+            <th>Vector</th><th>Age</th><th>Status</th><th>Layer</th><th>Fix</th>
+          </tr></thead>
+          <tbody id="vulnTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-packages" style="display:none">
+      <table class="group-table">
+        <thead><tr><th>Package</th><th>Version</th><th>Layer</th><th>Total</th><th>Severities</th><th>Fixable</th></tr></thead>
+        <tbody id="pkgTbody"></tbody>
+      </table>
+    </div>
+
+    <div id="tab-compare" style="display:none">
+      <div class="compare-controls">
+        <select id="cmpA"></select>
+        <span style="color:var(--text3);font-size:13px">vs</span>
+        <select id="cmpB"></select>
+        <button class="btn btn-primary" onclick="runCompare()" style="padding:7px 16px;font-size:13px">Compare</button>
+      </div>
+      <div id="compareResults"></div>
+    </div>
+
+    <div id="tab-history" style="display:none">
+      <div id="historyList" class="history-list"><p style="color:var(--text5);font-size:13px;padding:20px">Loading history…</p></div>
+    </div>
+  </div>
+
+  <div id="emptyState" class="full-panel">
+    <div class="empty-state"><p>Enter a Docker image name and click <b>Scan Image</b></p><br><small>Requires Trivy installed and FastAPI backend running on localhost:8000</small></div>
+  </div>
+  <div id="scanningState" class="full-panel" style="display:none">
+    <div class="scanning"><div class="spinner"></div><p id="scanMsg">Scanning…</p><small style="color:var(--text5)">This may take a few minutes for large images</small></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let allVulns=[],allSecrets=[],allMisconfigs=[];
+let activeFilter='ALL',fixableOnly=false;
+let sortKey='Severity',sortDir=1,expandedRow=null;
+let scanHistory=[];
+let currentImageName='';
+const sevOrder=['CRITICAL','HIGH','MEDIUM','LOW','UNKNOWN'];
+const sevColors={CRITICAL:'#c0392b',HIGH:'#e67e22',MEDIUM:'#f39c12',LOW:'#27ae60',UNKNOWN:'#95a5a6'};
+const sevWeight={CRITICAL:10,HIGH:7,MEDIUM:4,LOW:1,UNKNOWN:2};
+
+// Dark mode
+const prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+let darkMode=localStorage.getItem('trivyDark')!==null?localStorage.getItem('trivyDark')==='1':prefersDark;
+function applyDark(){document.documentElement.classList.toggle('dark',darkMode);document.getElementById('dmTrack').classList.toggle('on',darkMode);document.getElementById('dmLabel').textContent=darkMode?'Light mode':'Dark mode';localStorage.setItem('trivyDark',darkMode?'1':'0');}
+function toggleDark(){darkMode=!darkMode;applyDark();}
+applyDark();
+
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
+function cvssClass(s){if(!s)return'none';if(s>=9)return'critical';if(s>=7)return'high';if(s>=4)return'medium';return'low';}
+function getScore(v){return v.CVSS?.nvd?.V3Score||v.CVSS?.nvd?.V2Score||v.CVSS?.redhat?.V3Score||null;}
+function getVec(v){return v.CVSS?.nvd?.V3Vector||v.CVSS?.redhat?.V3Vector||'';}
+function getAttackVector(v){const m=getVec(v);if(m.includes('AV:N'))return'Network';if(m.includes('AV:A'))return'Adjacent';if(m.includes('AV:L'))return'Local';if(m.includes('AV:P'))return'Physical';return null;}
+function getPrivsRequired(v){const m=getVec(v);if(m.includes('PR:N'))return'None';if(m.includes('PR:L'))return'Low';if(m.includes('PR:H'))return'High';return null;}
+function getUserInteraction(v){const m=getVec(v);if(m.includes('UI:N'))return'None';if(m.includes('UI:R'))return'Required';return null;}
+function getScope(v){const m=getVec(v);if(m.includes('S:C'))return'Changed';if(m.includes('S:U'))return'Unchanged';return null;}
+function cveDaysOld(v){if(!v.PublishedDate)return null;return Math.floor((Date.now()-new Date(v.PublishedDate))/86400000);}
+function ageChip(days){if(days===null)return`<span style="color:var(--text5);font-size:12px">—</span>`;const cls=days>365?'age-old':days>90?'age-med':'age-new';return`<span class="age-chip ${cls}">${days}d</span>`;}
+function calcRiskScore(vulns){if(!vulns.length)return 0;const raw=vulns.reduce((sum,v)=>sum+(sevWeight[v.Severity]||2),0);return Math.min(100,Math.round(raw/vulns.length*10));}
+function isRemotelyExploitable(v){return getAttackVector(v)==='Network';}
+function hasKnownExploit(v){return!!(v.VendorSeverity||(v.References&&v.References.some(r=>r.includes('exploit-db')||r.includes('packetstorm')||r.includes('rapid7')||r.includes('metasploit'))));}
+function priorityScore(v){let s=0;if(v.Severity==='CRITICAL')s+=40;else if(v.Severity==='HIGH')s+=25;else if(v.Severity==='MEDIUM')s+=10;if(v.FixedVersion)s+=20;if(isRemotelyExploitable(v))s+=20;if(hasKnownExploit(v))s+=15;const sc=getScore(v);if(sc)s+=sc;return s;}
+function remediationText(v){if(v.FixedVersion)return`Upgrade <b>${v.PkgName}</b> from <code>${v.InstalledVersion}</code> to <code>${v.FixedVersion}</code>`;return`No fix available yet. Monitor <a href="https://nvd.nist.gov/vuln/detail/${v.VulnerabilityID}" target="_blank" style="color:#1e8449">NVD</a> for updates. Consider replacing or removing <b>${v.PkgName}</b> if not required.`;}
+function statusBadge(s){if(!s)return'';const k=s.toLowerCase().replace(/\s+/g,'_');return`<span class="status-${k}">${s.replace(/_/g,' ')}</span>`;}
+function layerShort(v){const path=v.PkgPath||v.Layer?.DiffID||'';if(!path)return'';const parts=path.split('/');return parts[parts.length-1].slice(0,20)||'';}
+
+// ── Export ───────────────────────────────────────────────────────────────────
+function exportCSV(){
+  if(!allVulns.length)return showToast('No results to export');
+  const headers=['CVE ID','Package','Installed Version','Fixed Version','Severity','CVSS','Attack Vector','Status','Age (days)','Title'];
+  const rows=allVulns.map(v=>[
+    v.VulnerabilityID,v.PkgName,v.InstalledVersion,v.FixedVersion||'',
+    v.Severity,getScore(v)||'',getAttackVector(v)||'',v.Status||'',
+    cveDaysOld(v)||'',(v.Title||'').replace(/,/g,';')
+  ]);
+  const csv=[headers,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
+  download(`trivy-${currentImageName}-${date()}.csv`,csv,'text/csv');
+  showToast('CSV exported');
+}
+
+function exportJSON(){
+  if(!allVulns.length)return showToast('No results to export');
+  const payload={image:currentImageName,scanned:new Date().toISOString(),summary:{total:allVulns.length,critical:allVulns.filter(v=>v.Severity==='CRITICAL').length,high:allVulns.filter(v=>v.Severity==='HIGH').length,medium:allVulns.filter(v=>v.Severity==='MEDIUM').length,low:allVulns.filter(v=>v.Severity==='LOW').length,fixable:allVulns.filter(v=>v.FixedVersion).length},vulnerabilities:allVulns,secrets:allSecrets,misconfigurations:allMisconfigs};
+  download(`trivy-${currentImageName}-${date()}.json`,JSON.stringify(payload,null,2),'application/json');
+  showToast('JSON exported');
+}
+
+function exportPDF(){
+  if(!allVulns.length)return showToast('No results to export');
+  const counts={CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0,UNKNOWN:0};
+  allVulns.forEach(v=>counts[v.Severity]=(counts[v.Severity]||0)+1);
+  const fixable=allVulns.filter(v=>v.FixedVersion).length;
+
+  // ── FIX: read the dropdown value and slice accordingly ──
+  const pdfRowsVal = document.getElementById('pdfRows').value;
+  const sorted = [...allVulns].sort((a,b)=>priorityScore(b)-priorityScore(a));
+  const exportVulns = pdfRowsVal === 'all' ? sorted : sorted.slice(0, parseInt(pdfRowsVal, 10));
+  const rowLabel = pdfRowsVal === 'all' ? `All ${exportVulns.length}` : `Top ${pdfRowsVal}`;
+
+  const rows=exportVulns.map(v=>`<tr><td style="font-family:monospace;font-size:11px">${v.VulnerabilityID}</td><td style="font-family:monospace;font-size:11px">${v.PkgName}</td><td style="font-size:11px">${v.Severity}</td><td style="font-family:monospace;font-size:11px">${v.FixedVersion||'—'}</td><td style="font-size:11px">${(v.Title||'').slice(0,60)}</td></tr>`).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Trivy Report</title>
+  <style>body{font-family:system-ui,sans-serif;padding:30px;color:#1a1a1a;}h1{font-size:20px;margin-bottom:4px;}h2{font-size:14px;font-weight:600;margin:20px 0 8px;text-transform:uppercase;letter-spacing:0.4px;color:#555;}p{font-size:13px;color:#555;margin-bottom:16px;}.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px;}.card{border:1px solid #eee;border-radius:6px;padding:10px;text-align:center;}.card .n{font-size:22px;font-weight:700;}.card .l{font-size:10px;color:#888;text-transform:uppercase;}table{width:100%;border-collapse:collapse;font-size:12px;}th{text-align:left;padding:6px 8px;border-bottom:2px solid #eee;font-size:11px;text-transform:uppercase;color:#888;}td{padding:6px 8px;border-bottom:1px solid #f5f5f5;}</style></head>
+  <body><h1>Vulnerability Report</h1><p>Image: <b>${currentImageName}</b> &nbsp;·&nbsp; Scanned: ${new Date().toLocaleString()} &nbsp;·&nbsp; Total CVEs: ${allVulns.length}</p>
+  <div class="grid"><div class="card"><div class="n" style="color:#c0392b">${counts.CRITICAL}</div><div class="l">Critical</div></div><div class="card"><div class="n" style="color:#e67e22">${counts.HIGH}</div><div class="l">High</div></div><div class="card"><div class="n" style="color:#f39c12">${counts.MEDIUM}</div><div class="l">Medium</div></div><div class="card"><div class="n" style="color:#27ae60">${counts.LOW}</div><div class="l">Low</div></div><div class="card"><div class="n" style="color:#4a6cf7">${fixable}</div><div class="l">Fixable</div></div></div>
+  <h2>${rowLabel} priority vulnerabilities</h2><table><thead><tr><th>CVE ID</th><th>Package</th><th>Severity</th><th>Fix</th><th>Title</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  const w=window.open('','_blank');
+  w.document.write(html);
+  w.document.close();
+  w.onload=()=>{w.print();};
+  showToast('PDF print dialog opened');
+}
+
+function download(name,content,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();}
+function date(){return new Date().toISOString().slice(0,10);}
+
+// ── Compare ──────────────────────────────────────────────────────────────────
+function populateCompareSelects(){
+  const a=document.getElementById('cmpA');
+  const b=document.getElementById('cmpB');
+  const opts=scanHistory.map((e,i)=>`<option value="${i}">${e.imageName} — ${e.time.toLocaleDateString()} ${e.time.toLocaleTimeString()}</option>`).join('');
+  a.innerHTML=opts;
+  b.innerHTML=opts;
+  if(scanHistory.length>1) b.selectedIndex=1;
+}
+
+function runCompare(){
+  const ai=parseInt(document.getElementById('cmpA').value);
+  const bi=parseInt(document.getElementById('cmpB').value);
+  if(ai===bi)return showToast('Please select two different scans');
+  const scanA=scanHistory[ai];
+  const scanB=scanHistory[bi];
+  const setA=new Map(scanA.vulns.map(v=>[v.VulnerabilityID+v.PkgName,v]));
+  const setB=new Map(scanB.vulns.map(v=>[v.VulnerabilityID+v.PkgName,v]));
+  const newVulns=[],fixedVulns=[],unchanged=[];
+  setA.forEach((v,k)=>{if(!setB.has(k))newVulns.push(v);else unchanged.push(v);});
+  setB.forEach((v,k)=>{if(!setA.has(k))fixedVulns.push(v);});
+
+  const makeRows=(vulns,tag)=>vulns.sort((a,b)=>sevOrder.indexOf(a.Severity)-sevOrder.indexOf(b.Severity)).map(v=>`<tr><td><span class="${tag}">${tag==='tag-new'?'New':tag==='tag-fixed'?'Fixed':'Unchanged'}</span></td><td><span class="cve-id">${v.VulnerabilityID}</span></td><td style="font-family:monospace;font-size:12px">${v.PkgName}</td><td><span class="sev-badge sev-${v.Severity}">${v.Severity[0]+v.Severity.slice(1).toLowerCase()}</span></td><td style="font-family:monospace;font-size:11px;color:var(--text3)">${v.FixedVersion||'—'}</td></tr>`).join('');
+
+  document.getElementById('compareResults').innerHTML=`
+    <div class="compare-summary">
+      <div class="compare-stat"><div class="cs-num" style="color:#c0392b">${newVulns.length}</div><div class="cs-lbl">New CVEs in ${scanA.imageName}</div></div>
+      <div class="compare-stat"><div class="cs-num" style="color:#27ae60">${fixedVulns.length}</div><div class="cs-lbl">Fixed since ${scanB.imageName}</div></div>
+      <div class="compare-stat"><div class="cs-num" style="color:var(--text3)">${unchanged.length}</div><div class="cs-lbl">Unchanged</div></div>
+    </div>
+    <div class="table-wrap"><table class="compare-table">
+      <thead><tr><th>Status</th><th>CVE ID</th><th>Package</th><th>Severity</th><th>Fix</th></tr></thead>
+      <tbody>${makeRows(newVulns,'tag-new')}${makeRows(fixedVulns,'tag-fixed')}${makeRows(unchanged,'tag-unchanged')}</tbody>
+    </table></div>`;
+}
+
+// ── Scan / Load ──────────────────────────────────────────────────────────────
+const scanHints={image:'Enter a Docker image name — e.g. nginx:latest, ubuntu:22.04',container:'Select a running container from the list',fs:'Enter an absolute path on the server — e.g. /home/user/myapp',repo:'Enter a Git repository URL — e.g. https://github.com/org/repo'};
+
+async function onScanTypeChange(){
+  const type=document.getElementById('scanType').value;
+  const input=document.getElementById('imageInput');
+  const sel=document.getElementById('containerSelect');
+  document.getElementById('scanHint').textContent=scanHints[type]||'';
+  if(type==='container'){
+    input.style.display='none';sel.style.display='';
+    sel.innerHTML='<option value="">Loading containers…</option>';
+    try{const res=await fetch('http://localhost:8000/containers');const cs=await res.json();sel.innerHTML=cs.length?cs.map(c=>`<option value="${c.id}">${c.name} — ${c.image} (${c.status})</option>`).join(''):'<option value="">No running containers found</option>';}
+    catch(e){sel.innerHTML='<option value="">Could not reach backend</option>';}
+  } else {
+    input.style.display='';sel.style.display='none';
+    const ph={image:'e.g. nginx:latest, ubuntu:22.04, node:14',fs:'e.g. /home/user/myapp',repo:'e.g. https://github.com/org/repo'};
+    input.placeholder=ph[type]||'';input.value='';
+  }
+}
+
+async function loadHistory(){
+  try{const res=await fetch('http://localhost:8000/history');if(!res.ok)return;
+  const rows=await res.json();
+  scanHistory=rows.map(r=>({id:r.id,imageName:r.image_name,time:new Date(r.scanned_at),duration:r.duration,total:r.total,fixable:r.fixable,counts:{CRITICAL:r.critical,HIGH:r.high,MEDIUM:r.medium,LOW:r.low,UNKNOWN:r.unknown},vulns:JSON.parse(r.results).Results?.flatMap(x=>x.Vulnerabilities||[])||[]}));
+  document.getElementById('historyCount').textContent=scanHistory.length;
+  renderHistory();populateCompareSelects();}catch(e){}
+}
+
+async function startScan(){
+  const type=document.getElementById('scanType').value;
+  let target=type==='container'?document.getElementById('containerSelect').value:document.getElementById('imageInput').value.trim();
+  if(!target)return showToast(type==='container'?'Please select a container':'Please enter a target');
+  const btn=document.getElementById('scanBtn');btn.disabled=true;showPanel('scanning');
+  const scanners=['vuln'];
+  if(document.getElementById('chk-secrets').checked)scanners.push('secret');
+  if(document.getElementById('chk-misconfig').checked)scanners.push('misconfig');
+  const hideUnfixed=document.getElementById('chk-unfixed').checked;
+  document.getElementById('scanMsg').textContent=`Scanning ${type}: ${target}…`;
+  try{
+    const params=new URLSearchParams({target,scan_type:type,scanners:scanners.join(','),hide_unfixed:hideUnfixed});
+    const res=await fetch(`http://localhost:8000/scan?${params}`);
+    if(!res.ok)throw new Error();
+    const data=await res.json();
+    await loadHistory();
+    renderResults(data,target,data._meta?.duration);
+  }catch(e){showToast('Could not connect to backend. Is the server running?');showPanel('empty');}
+  finally{btn.disabled=false;}
+}
+
+async function deleteScan(id,e){e.stopPropagation();try{await fetch(`http://localhost:8000/history/${id}`,{method:'DELETE'});scanHistory=scanHistory.filter(s=>s.id!==id);document.getElementById('historyCount').textContent=scanHistory.length;renderHistory();populateCompareSelects();showToast('Scan deleted');}catch(e){showToast('Could not delete scan');}}
+
+function renderResults(data,imageName,duration){
+  currentImageName=imageName;
+  allVulns=[];allSecrets=[];allMisconfigs=[];
+  let os='Unknown';
+  if(data.Results){data.Results.forEach(r=>{if(r.Type&&os==='Unknown')os=r.Type;if(r.Vulnerabilities)allVulns.push(...r.Vulnerabilities);if(r.Secrets)allSecrets.push(...r.Secrets.map(s=>({...s,target:r.Target})));if(r.Misconfigurations)allMisconfigs.push(...r.Misconfigurations.map(m=>({...m,target:r.Target})));});}
+  const counts={CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0,UNKNOWN:0};let fixable=0;
+  allVulns.forEach(v=>{counts[v.Severity]=(counts[v.Severity]||0)+1;if(v.FixedVersion)fixable++;});
+  const total=allVulns.length;
+  const riskScore=calcRiskScore(allVulns);
+  const riskLevel=riskScore>=75?'critical':riskScore>=50?'high':riskScore>=25?'medium':'low';
+  const circle=document.getElementById('riskCircle');circle.className=`risk-score-circle risk-${riskLevel}`;
+  document.getElementById('riskNum').textContent=riskScore;
+  document.getElementById('riskTitle').textContent={critical:'Critical Risk',high:'High Risk',medium:'Medium Risk',low:'Low Risk'}[riskLevel];
+  document.getElementById('riskDesc').textContent=`${counts.CRITICAL} critical, ${counts.HIGH} high severity vulnerabilities across ${Object.keys(allVulns.reduce((m,v)=>(m[v.PkgName]=1,m),{})).length} packages.${allSecrets.length?` ${allSecrets.length} secret(s) detected.`:''}${allMisconfigs.length?` ${allMisconfigs.length} misconfiguration(s) found.`:''}`;
+  const fixableCritHigh=allVulns.filter(v=>v.FixedVersion&&(v.Severity==='CRITICAL'||v.Severity==='HIGH')).length;
+  const fixPct=total>0?Math.round(fixable/total*100):0;
+  document.getElementById('fixImpact').innerHTML=`<b>${fixPct}%</b> of CVEs are fixable<br><span style="font-size:12px;color:var(--text2)">Fixing patches eliminates <b style="color:#c0392b">${fixableCritHigh}</b> critical/high CVEs</span>`;
+  const ages=allVulns.map(v=>cveDaysOld(v)).filter(d=>d!==null);
+  document.getElementById('ageAvg').textContent=ages.length?Math.round(ages.reduce((a,b)=>a+b,0)/ages.length):'—';
+  document.getElementById('ageOldest').textContent=ages.length?Math.max(...ages):'—';
+  document.getElementById('m-total').textContent=total;document.getElementById('m-critical').textContent=counts.CRITICAL;document.getElementById('m-high').textContent=counts.HIGH;document.getElementById('m-medium').textContent=counts.MEDIUM;document.getElementById('m-low').textContent=counts.LOW;document.getElementById('m-unknown').textContent=counts.UNKNOWN;document.getElementById('m-fixable').textContent=fixable;
+  const chart=document.getElementById('severityChart');chart.innerHTML='';
+  sevOrder.forEach(s=>{const pct=total>0?(counts[s]/total*100).toFixed(1):0;const row=document.createElement('div');row.className='bar-row';row.innerHTML=`<div class="bar-label">${s[0]+s.slice(1).toLowerCase()}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${sevColors[s]}">${counts[s]>2?counts[s]:''}</div></div><div class="bar-count">${counts[s]}</div>`;chart.appendChild(row);});
+  const pkgMap={};allVulns.forEach(v=>{pkgMap[v.PkgName]=(pkgMap[v.PkgName]||0)+1;});
+  const topPkgs=Object.entries(pkgMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const pkgList=document.getElementById('pkgList');const frag0=document.createDocumentFragment();
+  topPkgs.forEach(([pkg,cnt])=>{const worst=allVulns.filter(v=>v.PkgName===pkg).sort((a,b)=>sevOrder.indexOf(a.Severity)-sevOrder.indexOf(b.Severity))[0];const el=document.createElement('div');el.className='pkg-row';el.innerHTML=`<span class="pkg-name">${pkg}</span><span class="pkg-meta">${cnt} vuln${cnt>1?'s':''}</span><span class="sev-badge sev-${worst.Severity}">${worst.Severity[0]+worst.Severity.slice(1).toLowerCase()}</span>`;el.onclick=()=>switchTabByName('packages');frag0.appendChild(el);});
+  pkgList.innerHTML='';pkgList.appendChild(frag0);
+  document.getElementById('imageInfoBar').innerHTML=`<span><b>Image:</b> ${imageName}</span><span><b>OS:</b> ${os}</span><span><b>Scanned:</b> ${new Date().toLocaleString()}</span><span><b>Duration:</b> ${duration||'?'}s</span><span><b>Total CVEs:</b> ${total}</span>`;
+  activeFilter='ALL';fixableOnly=false;expandedRow=null;
+  document.getElementById('fixableToggle').classList.remove('active');document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='all';
+  renderSecrets();renderMisconfigs();renderPriorityTab();renderTable();renderPackageTab();populateCompareSelects();
+  showPanel('results');switchTabByName('priority');
+}
+
+function renderSecrets(){
+  const el=document.getElementById('secretsList');const cnt=document.getElementById('secretCount');cnt.textContent=`(${allSecrets.length})`;
+  if(!allSecrets.length){el.innerHTML=`<p class="empty-extra">No secrets detected</p>`;return;}
+  const sb=document.getElementById('secretSort')?.value||'sev';
+  const sorted=[...allSecrets].sort((a,b)=>sb==='sev'?sevOrder.indexOf(a.Severity||'UNKNOWN')-sevOrder.indexOf(b.Severity||'UNKNOWN'):sb==='title'?(a.Title||'').localeCompare(b.Title||''):(a.target||'').localeCompare(b.target||''));
+  const frag=document.createDocumentFragment();
+  sorted.slice(0,8).forEach(s=>{const row=document.createElement('div');row.className='secret-item';row.innerHTML=`<div><div class="secret-title">${s.Title||s.RuleID||'Secret'}</div><div class="secret-meta">${s.target||''} ${s.Match?'· '+s.Match.slice(0,40)+'…':''}</div></div><span class="sev-badge sev-${s.Severity||'UNKNOWN'}">${(s.Severity||'unknown')[0].toUpperCase()+(s.Severity||'unknown').slice(1).toLowerCase()}</span>`;frag.appendChild(row);});
+  el.innerHTML='';el.appendChild(frag);
+  if(allSecrets.length>8){const more=document.createElement('p');more.style.cssText='font-size:12px;color:var(--text3);padding-top:6px';more.textContent=`+${allSecrets.length-8} more secrets`;el.appendChild(more);}
+}
+
+function renderMisconfigs(){
+  const el=document.getElementById('misconfigList');const cnt=document.getElementById('misconfigCount');cnt.textContent=`(${allMisconfigs.length})`;
+  if(!allMisconfigs.length){el.innerHTML=`<p class="empty-extra">No misconfigurations detected</p>`;return;}
+  const sb=document.getElementById('misconfigSort')?.value||'sev';
+  const sorted=[...allMisconfigs].sort((a,b)=>sb==='sev'?sevOrder.indexOf(a.Severity||'UNKNOWN')-sevOrder.indexOf(b.Severity||'UNKNOWN'):sb==='title'?(a.Title||'').localeCompare(b.Title||''):(a.target||'').localeCompare(b.target||''));
+  const frag=document.createDocumentFragment();
+  sorted.slice(0,6).forEach((m,i)=>{const wrap=document.createElement('div');wrap.className='misconfig-item';const expanded=document.createElement('div');expanded.className='misconfig-expanded';expanded.innerHTML=`${m.Description||'No description.'}<br><br><b>Resolution:</b> ${m.Resolution||'See documentation.'}<br><b>Target:</b> ${m.target||'—'}<br><b>ID:</b> ${m.ID||'—'}`;wrap.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between"><div class="misconfig-title">${m.Title||m.ID||'Misconfiguration'}</div><span class="sev-badge sev-${m.Severity||'UNKNOWN'}">${(m.Severity||'unknown')[0].toUpperCase()+(m.Severity||'unknown').slice(1).toLowerCase()}</span></div><div class="misconfig-desc">${(m.Message||'').slice(0,100)}${(m.Message||'').length>100?'…':''}</div>`;wrap.appendChild(expanded);wrap.onclick=()=>expanded.classList.toggle('open');frag.appendChild(wrap);});
+  el.innerHTML='';el.appendChild(frag);
+  if(allMisconfigs.length>6){const more=document.createElement('p');more.style.cssText='font-size:12px;color:var(--text3);padding-top:6px';more.textContent=`+${allMisconfigs.length-6} more misconfigurations`;el.appendChild(more);}
+}
+
+function renderPriorityTab(){
+  const pkgFixMap={};allVulns.filter(v=>v.FixedVersion).forEach(v=>{if(!pkgFixMap[v.PkgName])pkgFixMap[v.PkgName]={fixes:[],critHigh:0,version:v.FixedVersion};pkgFixMap[v.PkgName].fixes.push(v);if(v.Severity==='CRITICAL'||v.Severity==='HIGH')pkgFixMap[v.PkgName].critHigh++;pkgFixMap[v.PkgName].version=v.FixedVersion;});
+  const topFixes=Object.entries(pkgFixMap).sort((a,b)=>b[1].critHigh-a[1].critHigh).slice(0,5);
+  const totalFixable=allVulns.filter(v=>v.FixedVersion).length;
+  let sh=`<h4>Remediation summary — ${topFixes.length} package upgrades fix ${totalFixable} vulnerabilities</h4>`;
+  topFixes.forEach(([pkg,d])=>{sh+=`<div class="remed-row"><span class="remed-pkg">${pkg}</span><span class="remed-impact">fixes ${d.fixes.length} CVEs (${d.critHigh} critical/high)</span><span class="remed-fix">→ ${d.version}</span></div>`;});
+  document.getElementById('remedSummary').innerHTML=sh;
+  const sorted=[...allVulns].sort((a,b)=>priorityScore(b)-priorityScore(a)).slice(0,30);
+  const frag=document.createDocumentFragment();
+  sorted.forEach((v,i)=>{const score=getScore(v),av=getAttackVector(v),remote=isRemotelyExploitable(v),exploit=hasKnownExploit(v),days=cveDaysOld(v);const el=document.createElement('div');el.className='priority-item';el.innerHTML=`<div class="priority-num ${v.Severity==='CRITICAL'?'p-critical':''}">${i+1}</div><div class="priority-content"><div class="p-title"><span class="cve-id">${v.VulnerabilityID}</span> — ${v.PkgName} @ ${v.InstalledVersion}</div><div class="p-meta">${score?`<span>CVSS ${score.toFixed(1)}</span>`:''}${av?`<span>Vector: ${av}</span>`:''}${days!==null?`<span>${days} days old</span>`:''}${v.Status?`<span>${statusBadge(v.Status)}</span>`:''}${v.FixedVersion?`<span style="color:#27ae60">Fix: ${v.FixedVersion}</span>`:'<span style="color:var(--text4)">No fix available</span>'}</div>${v.Description?`<div style="font-size:12px;color:var(--text2);margin-top:5px;line-height:1.5">${v.Description.slice(0,180)}${v.Description.length>180?'…':''}</div>`:''}<div class="remediation-box" style="margin-top:8px;font-size:12px">${remediationText(v)}</div></div><div class="priority-tags"><span class="sev-badge sev-${v.Severity}">${v.Severity[0]+v.Severity.slice(1).toLowerCase()}</span>${remote?'<span class="remote-badge">Remote</span>':''}${exploit?'<span class="exploit-badge">Exploit ref</span>':''}</div>`;frag.appendChild(el);});
+  const list=document.getElementById('priorityList');list.innerHTML='';list.appendChild(frag);
+}
+
+function setFilter(f){activeFilter=f;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));document.getElementById('fb-'+f)?.classList.add('active');document.querySelectorAll('.metric-card').forEach(c=>c.classList.remove('active'));document.getElementById('card-'+(f==='ALL'?'all':f))?.classList.add('active');expandedRow=null;renderTable();}
+function toggleFixable(){fixableOnly=!fixableOnly;document.getElementById('fixableToggle').classList.toggle('active',fixableOnly);document.querySelectorAll('.metric-card').forEach(c=>c.classList.remove('active'));if(fixableOnly)document.getElementById('card-fixable').classList.add('active');expandedRow=null;renderTable();}
+function sortBy(key){if(sortKey===key)sortDir*=-1;else{sortKey=key;sortDir=1;}renderTable();}
+
+function renderTable(){
+  const search=document.getElementById('searchInput').value.toLowerCase();
+  const statusF=document.getElementById('statusFilter').value;
+  let filtered=allVulns.filter(v=>activeFilter==='ALL'||v.Severity===activeFilter).filter(v=>!fixableOnly||v.FixedVersion).filter(v=>statusF==='all'||((v.Status||'affected').toLowerCase().replace(/\s+/g,'_'))===statusF).filter(v=>!search||v.VulnerabilityID.toLowerCase().includes(search)||v.PkgName.toLowerCase().includes(search)||(v.Title||'').toLowerCase().includes(search));
+  filtered.sort((a,b)=>{if(sortKey==='Severity')return(sevOrder.indexOf(a.Severity)-sevOrder.indexOf(b.Severity))*sortDir;if(sortKey==='cvss')return((getScore(b)||0)-(getScore(a)||0))*sortDir;const av=(a[sortKey]||'').toLowerCase(),bv=(b[sortKey]||'').toLowerCase();return av<bv?-sortDir:av>bv?sortDir:0;});
+  const tbody=document.getElementById('vulnTbody');tbody.innerHTML='';
+  if(!filtered.length){const tr=document.createElement('tr');tr.innerHTML=`<td colspan="11" style="text-align:center;padding:30px;color:var(--text5)">No vulnerabilities match your filters</td>`;tbody.appendChild(tr);return;}
+  const frag=document.createDocumentFragment();
+  filtered.forEach(v=>{
+    const score=getScore(v),isExp=expandedRow===v.VulnerabilityID,av=getAttackVector(v),days=cveDaysOld(v),layer=layerShort(v);
+    const tr=document.createElement('tr');tr.className='data-row';
+    tr.innerHTML=`<td style="width:20px"><span class="expand-icon${isExp?' open':''}">▶</span></td><td><span class="cve-id">${v.VulnerabilityID}</span></td><td style="font-family:monospace;font-size:12px;color:var(--text)">${v.PkgName}</td><td style="font-family:monospace;font-size:12px;color:var(--text3)">${v.InstalledVersion}</td><td><span class="sev-badge sev-${v.Severity}">${v.Severity[0]+v.Severity.slice(1).toLowerCase()}</span></td><td>${score?`<span class="cvss-chip cvss-${cvssClass(score)}">${score.toFixed(1)}</span>`:'<span style="color:var(--text5);font-size:12px">—</span>'}</td><td>${av?`<span class="vector-tag ${av==='Network'?'remote-badge':''}" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bar-track);color:var(--text2)">${av}</span>`:'<span style="color:var(--text5);font-size:12px">—</span>'}</td><td>${ageChip(days)}</td><td>${v.Status?statusBadge(v.Status):'<span style="color:var(--text5);font-size:12px">—</span>'}</td><td>${layer?`<span class="layer-badge" title="${v.PkgPath||v.Layer?.DiffID||''}">${layer}</span>`:'<span style="color:var(--text5);font-size:12px">—</span>'}</td><td>${v.FixedVersion?`<span class="fix-badge">${v.FixedVersion}</span>`:'<span class="no-fix-badge">No fix</span>'}</td>`;
+    tr.onclick=()=>{expandedRow=isExp?null:v.VulnerabilityID;renderTable();};
+    frag.appendChild(tr);
+    if(isExp){
+      const priv=getPrivsRequired(v),ui=getUserInteraction(v),scope=getScope(v),av2=getAttackVector(v);
+      const refs=v.References?v.References.slice(0,5).map(r=>{try{return`<a href="${r}" target="_blank">${new URL(r).hostname}</a>`}catch{return''}}).join(''):'';
+      const det=document.createElement('tr');det.className='expanded-row';
+      det.innerHTML=`<td colspan="11"><div class="expand-detail"><div class="expand-section"><h4>Description</h4><p>${v.Description||'No description available.'}</p></div><div class="expand-section"><h4>Remediation</h4><div class="remediation-box">${remediationText(v)}</div></div><div class="expand-section"><h4>Attack vector details</h4><div class="attack-grid"><div class="attack-item"><label>Access vector</label><div class="av ${av2==='Network'?'av-network':av2==='Adjacent'?'av-adjacent':'av-local'}">${av2||'—'}</div></div><div class="attack-item"><label>Privileges required</label><div class="av">${priv||'—'}</div></div><div class="attack-item"><label>User interaction</label><div class="av">${ui||'—'}</div></div><div class="attack-item"><label>Scope</label><div class="av">${scope||'—'}</div></div></div></div><div class="expand-section"><div class="detail-grid"><div class="detail-item"><label>CVE ID</label><p><a href="https://nvd.nist.gov/vuln/detail/${v.VulnerabilityID}" target="_blank" style="color:#4a6cf7">${v.VulnerabilityID}</a></p></div><div class="detail-item"><label>CVSS Score</label><p>${score?`${score.toFixed(1)} / 10`:'Not available'}</p></div><div class="detail-item"><label>Package</label><p style="font-family:monospace">${v.PkgName} @ ${v.InstalledVersion}</p></div><div class="detail-item"><label>Fixed version</label><p style="font-family:monospace;color:${v.FixedVersion?'#27ae60':'var(--text4)'}">${v.FixedVersion||'None available'}</p></div><div class="detail-item"><label>Status</label><p>${v.Status?statusBadge(v.Status):'—'}</p></div><div class="detail-item"><label>Data source</label><p style="font-size:12px;color:var(--text2)">${v.DataSource?.Name||v.DataSource||'—'}</p></div>${v.Layer?.DiffID?`<div class="detail-item"><label>Image layer</label><p style="font-family:monospace;font-size:11px;word-break:break-all">${v.Layer.DiffID}</p></div>`:''}${v.PkgPath?`<div class="detail-item"><label>Package path</label><p style="font-family:monospace;font-size:11px;word-break:break-all">${v.PkgPath}</p></div>`:''}${v.PublishedDate?`<div class="detail-item"><label>Published</label><p>${new Date(v.PublishedDate).toLocaleDateString()} (${cveDaysOld(v)} days ago)</p></div>`:''}${v.LastModifiedDate?`<div class="detail-item"><label>Last modified</label><p>${new Date(v.LastModifiedDate).toLocaleDateString()}</p></div>`:''}</div></div>${refs?`<div class="expand-section"><h4>References</h4><div class="refs-list">${refs}</div></div>`:''}</div></td>`;
+      frag.appendChild(det);
+    }
+  });
+  tbody.appendChild(frag);
+}
+
+function renderPackageTab(){
+  const pkgMap={};allVulns.forEach(v=>{if(!pkgMap[v.PkgName])pkgMap[v.PkgName]={version:v.InstalledVersion,vulns:[],fixable:0,layer:layerShort(v)};pkgMap[v.PkgName].vulns.push(v);if(v.FixedVersion)pkgMap[v.PkgName].fixable++;});
+  const sorted=Object.entries(pkgMap).sort((a,b)=>b[1].vulns.length-a[1].vulns.length);
+  const tbody=document.getElementById('pkgTbody');const frag=document.createDocumentFragment();
+  sorted.forEach(([pkg,d])=>{const counts={};d.vulns.forEach(v=>counts[v.Severity]=(counts[v.Severity]||0)+1);const tr=document.createElement('tr');tr.innerHTML=`<td style="font-family:monospace;font-size:12px;font-weight:500">${pkg}</td><td style="font-family:monospace;font-size:11px;color:var(--text3)">${d.version}</td><td>${d.layer?`<span class="layer-badge">${d.layer}</span>`:'<span style="color:var(--text5)">—</span>'}</td><td style="font-weight:600">${d.vulns.length}</td><td><div class="mini-sev">${sevOrder.filter(s=>counts[s]).map(s=>`<span class="sev-badge sev-${s}">${counts[s]} ${s[0]+s.slice(1).toLowerCase()}</span>`).join('')}</div></td><td>${d.fixable>0?`<span class="fix-badge">${d.fixable} fixable</span>`:'<span class="no-fix-badge">None</span>'}</td>`;frag.appendChild(tr);});
+  tbody.innerHTML='';tbody.appendChild(frag);
+}
+
+function renderHistory(){
+  const list=document.getElementById('historyList');
+  if(!scanHistory.length){list.innerHTML='<p style="color:var(--text5);font-size:13px;padding:20px">No scan history yet.</p>';return;}
+  // Sort newest-first for display, so index i+1 is always the preceding scan
+  const sorted=[...scanHistory].sort((a,b)=>b.time-a.time);
+  const frag=document.createDocumentFragment();
+  sorted.forEach((entry,i)=>{
+    const prev=sorted[i+1];let diffHtml='';
+    // entry is newer, prev is older — positive diff means more CVEs introduced
+    if(prev){const diff=entry.total-prev.total;diffHtml=diff>0?`<span class="diff-badge diff-up">+${diff}</span>`:diff<0?`<span class="diff-badge diff-down">${diff}</span>`:`<span class="diff-badge diff-same">No change</span>`;}
+    const el=document.createElement('div');el.className='history-item';
+    const origIdx=scanHistory.indexOf(entry);
+    el.innerHTML=`<div style="display:flex;flex-direction:column;gap:2px">${sevOrder.filter(s=>entry.counts[s]).map(s=>`<span class="sev-badge sev-${s}">${entry.counts[s]} ${s[0]+s.slice(1).toLowerCase()}</span>`).join('')}</div><div style="flex:1"><div class="img-name">${entry.imageName}</div><div class="scan-time">${entry.time.toLocaleString()} · ${entry.duration}s · ${entry.total} total · ${entry.fixable} fixable</div></div>${diffHtml}<button class="btn-sm" onclick="loadFromHistory(${origIdx},event)">Load</button><button class="btn-sm btn-danger" onclick="deleteScan(${entry.id},event)">Delete</button>`;
+    frag.appendChild(el);
+  });
+  list.innerHTML='';list.appendChild(frag);
+}
+
+function loadFromHistory(i,e){
+  e.stopPropagation();const entry=scanHistory[i];allVulns=entry.vulns;allSecrets=[];allMisconfigs=[];currentImageName=entry.imageName;
+  const counts=entry.counts,total=entry.total;
+  document.getElementById('m-total').textContent=total;document.getElementById('m-critical').textContent=counts.CRITICAL;document.getElementById('m-high').textContent=counts.HIGH;document.getElementById('m-medium').textContent=counts.MEDIUM;document.getElementById('m-low').textContent=counts.LOW;document.getElementById('m-unknown').textContent=counts.UNKNOWN||0;document.getElementById('m-fixable').textContent=entry.fixable;
+  document.getElementById('imageInfoBar').innerHTML=`<span><b>Image:</b> ${entry.imageName}</span><span><b>Scanned:</b> ${entry.time.toLocaleString()}</span><span><b>Duration:</b> ${entry.duration}s</span><span><b>Total CVEs:</b> ${total}</span>`;
+  const hAges=entry.vulns.map(v=>cveDaysOld(v)).filter(d=>d!==null);
+  document.getElementById('ageAvg').textContent=hAges.length?Math.round(hAges.reduce((a,b)=>a+b,0)/hAges.length):'—';
+  document.getElementById('ageOldest').textContent=hAges.length?Math.max(...hAges):'—';
+  const chart=document.getElementById('severityChart');chart.innerHTML='';
+  sevOrder.forEach(s=>{const pct=total>0?(counts[s]/total*100).toFixed(1):0;const row=document.createElement('div');row.className='bar-row';row.innerHTML=`<div class="bar-label">${s[0]+s.slice(1).toLowerCase()}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${sevColors[s]}">${counts[s]>2?counts[s]:''}</div></div><div class="bar-count">${counts[s]}</div>`;chart.appendChild(row);});
+  activeFilter='ALL';fixableOnly=false;expandedRow=null;
+  document.getElementById('fixableToggle').classList.remove('active');document.getElementById('searchInput').value='';document.getElementById('statusFilter').value='all';
+  renderSecrets();renderMisconfigs();renderPriorityTab();renderTable();renderPackageTab();
+  switchTabByName('priority');showPanel('results');
+}
+
+function switchTabByName(name){
+  const names=['priority','vulns','packages','compare','history'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',names[i]===name));
+  names.forEach(t=>{document.getElementById('tab-'+t).style.display=t===name?'':'none';});
+  if(name==='compare') populateCompareSelects();
+}
+
+function showPanel(state){
+  document.getElementById('emptyState').style.display=state==='empty'?'':'none';
+  document.getElementById('scanningState').style.display=state==='scanning'?'':'none';
+  document.getElementById('riskBanner').style.display=state==='results'?'flex':'none';
+  document.getElementById('metricsRow').style.display=state==='results'?'grid':'none';
+  document.getElementById('extraCards').style.display=state==='results'?'grid':'none';
+  document.getElementById('chartsRow').style.display=state==='results'?'grid':'none';
+  document.getElementById('resultsPanel').style.display=state==='results'?'':'none';
+}
+
+document.getElementById('imageInput').addEventListener('keydown',e=>{if(e.key==='Enter')startScan();});
+document.querySelectorAll('.scan-toggle input').forEach(cb=>{cb.addEventListener('change',()=>cb.closest('.scan-toggle').classList.toggle('active',cb.checked));cb.closest('.scan-toggle').classList.toggle('active',cb.checked);});
+loadHistory();
+onScanTypeChange();
+</script>
+</body>
+</html>
