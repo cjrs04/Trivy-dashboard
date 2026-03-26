@@ -9,12 +9,12 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 DB_PATH = os.path.expanduser("~/.trivy-dashboard.db")
 
-#dont change - database and table creation
+# database and table creation
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
+#database connection - create a "scans" table
 def init_db():
     conn = get_db()
     conn.execute("""
@@ -35,7 +35,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-
+#initialise db
 @app.on_event("startup")
 async def startup():
     init_db()
@@ -45,7 +45,7 @@ async def startup():
          "--cache-dir", os.path.expanduser("~/.cache/trivy")],
         capture_output=True
     )
-
+#build a list of running containers using "docker ps" and return as JSON 
 @app.get("/containers")
 def list_containers():
     result = subprocess.run(
@@ -63,7 +63,7 @@ def list_containers():
                 "status": parts[3]
             })
     return containers
-
+#runs trivy sec scan based on the target and type returns as JSON
 @app.get("/scan")
 def scan(
     target: str,
@@ -136,7 +136,7 @@ def scan(
     conn.close()
 
     return {**data, "_meta": {"duration": round(duration, 2), "total": len(vulns), "fixable": fixable}}
-
+#quires database for history (last 50 scans, any more and it slows)
 @app.get("/history")
 def get_history():
     conn = get_db()
@@ -147,7 +147,7 @@ def get_history():
     """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
+#delete history
 @app.delete("/history/{scan_id}")
 def delete_scan(scan_id: int):
     conn = get_db()
